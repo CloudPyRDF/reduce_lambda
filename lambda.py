@@ -56,11 +56,12 @@ pickle.loads({pickled_script})({reducer},{file_paths})
         . ${roothome}/bin/thisroot.sh && \
         /mnt/cern_root/chroot/usr/bin/python3.7 /tmp/to_execute.py
     ''')
+    output_bucket = ssm.get_parameter('output_bucket')
 
-    s3.upload_file(f'/tmp/out.pickle', bucket, 'out.pickle')
+    s3.upload_file(f'/tmp/out.pickle', output_bucket, 'out.pickle')
 
     # get rid of the existing files once processing is done
-    s3.Bucket(bucket).objects.all().delete()
+    s3.Bucket(output_bucket).objects.all().delete()
 
     return {
         'statusCode': 200,
