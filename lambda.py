@@ -1,21 +1,52 @@
 import json
 import os
-from pathlib import Path
 
 import boto3
 
+bucket = os.environ.get('bucket')
+
 
 def lambda_handler(event, context):
-    print("started")
-
+    ssm = boto3.client('ssm')
     s3 = boto3.client('s3')
 
-    # create path
-    Path("/tmp/result").mkdir(parents=True, exist_ok=True)
+    ranges_number = ssm.get_parameter('ranges')
+    files_in_s3 = s3.list_objects_v2(bucket)['KeyCount']
+    if ranges_number != files_in_s3:
+        print(f'{files_in_s3}/{ranges_number} ready')
+        return {'statusCode': 400, 'body': json.dumps(f'not yet, only {files_in_s3}/{ranges_number} ready')}
 
-    for object_key in event["s3_object_keys"]:
-        file_path = f"/tmp/result/{object_key}"
-        s3.download_file(event["in_bucket_name"], object_key, file_path)
+    file_paths = []
+    for s3_object in s3.list_objects_v2(bucket)['Contents']:
+        file_path = f"/tmp/result/{s3_object['key']}"
+        s3.download_file(bucket, s3_object['key'], file_path)
+
+    if ranges_number == 1:
+        s3.upload_file(file_paths[0], bucket, 'out.pickle')
+        return {'statusCode': 200, 'body': json.dumps(f'Returned merged histogram to {bucket} bucket')}
+
+    import pickle
+    print("all files are in place, merging")
+
+    pickled_reducer = ssm.get_parameter('reducer')
+    reducer = pickle.loads(pickled_reducer)
+
+    def reduce_function(reducer, files):
+        accumulator = reducer(files[0], files[1])
+        for file in files[2:]:
+            accumulator = reducer(accumulator, file)
+        pickle.dump(accumulator, open('/tmp/out.pickle', 'w'))
+
+    pickled_script = pickle.dumps(reduce_function)
+
+    glue = f"""
+import pickle
+pickle.loads({pickled_script})({reducer},{file_paths})
+"""
+
+    script_file = open('/tmp/to_execute.py', "w")
+    script_file.write(glue)
+    script_file.close()
 
     result = os.system('''
         export PATH=/mnt/cern_root/chroot/usr/local/sbin:/mnt/cern_root/chroot/usr/local/bin:/mnt/cern_root/chroot/usr/sbin:/mnt/cern_root/chroot/usr/bin:/mnt/cern_root/chroot/sbin:/mnt/cern_root/chroot/bin:$PATH && \
@@ -23,15 +54,16 @@ def lambda_handler(event, context):
         export CPATH=/mnt/cern_root/chroot/usr/include:$CPATH && \            
         export roothome=/mnt/cern_root/root_install && \
         . ${roothome}/bin/thisroot.sh && \
-        chmod +x /mnt/cern_root/root_install/bin/hadd && \
-        cd /tmp &&
-        hadd out.root ./result/*.root
+        /mnt/cern_root/chroot/usr/bin/python3.7 /tmp/to_execute.py
     ''')
 
-    s3.upload_file(f'/tmp/out.root', event['out_bucket_name'], event['out_file_path'])
+    s3.upload_file(f'/tmp/out.pickle', bucket, 'out.pickle')
+
+    # get rid of the existing files once processing is done
+    s3.Bucket(bucket).objects.all().delete()
 
     return {
         'statusCode': 200,
-        'body': json.dumps(f'Returned merged histogram as {event["out_file_path"]} to {event["out_bucket_name"]} bucket'),
+        'body': json.dumps(f'Returned merged histogram to {bucket} bucket'),
         'result': json.dumps(result)
     }
