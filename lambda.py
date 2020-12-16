@@ -10,7 +10,7 @@ def lambda_handler(event, context):
     ssm = boto3.client('ssm')
     s3 = boto3.client('s3')
 
-    ranges_number = ssm.get_parameter('ranges')
+    ranges_number = int(ssm.get_parameter(Name='ranges'))
     files_in_s3 = s3.list_objects_v2(bucket)['KeyCount']
     if ranges_number != files_in_s3:
         print(f'{files_in_s3}/{ranges_number} ready')
@@ -28,7 +28,7 @@ def lambda_handler(event, context):
     import pickle
     print("all files are in place, merging")
 
-    pickled_reducer = ssm.get_parameter('reducer')
+    pickled_reducer = ssm.get_parameter(Name='reducer')
     reducer = pickle.loads(pickled_reducer)
 
     def reduce_function(reducer, files):
@@ -56,7 +56,7 @@ pickle.loads({pickled_script})({reducer},{file_paths})
         . ${roothome}/bin/thisroot.sh && \
         /mnt/cern_root/chroot/usr/bin/python3.7 /tmp/to_execute.py
     ''')
-    output_bucket = ssm.get_parameter('output_bucket')
+    output_bucket = ssm.get_parameter(Name='output_bucket')
 
     s3.upload_file(f'/tmp/out.pickle', output_bucket, 'out.pickle')
 
