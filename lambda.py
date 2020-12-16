@@ -28,7 +28,7 @@ def lambda_handler(event, context):
     import pickle
     print("all files are in place, merging")
 
-    pickled_reducer = ssm.get_parameter(Name='reducer')
+    pickled_reducer = ssm.get_parameter(Name='reducer').encode('utf-8')
     reducer = pickle.loads(pickled_reducer)
 
     def reduce_function(reducer, files):
